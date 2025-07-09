@@ -1,6 +1,8 @@
 # Environment variables
 .env
 
+#removing sensitive meembers data
+sodertornkyrkan-members.csv
 # Python
 __pycache__/
 *.py[cod]
