@@ -60,11 +60,6 @@ Create a `.env` file in the project directory:
 PASSWORD=yourpassword
 ```
 
-**Important**: Never commit the `.env` file to version control! Add it to your `.gitignore`:
-```gitignore
-.env
-```
-
 ### 3. Setup Configuration
 The script is pre-configured for Södertörnkyrkan:
 ```python
