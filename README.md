@@ -112,7 +112,7 @@ invalid@domain.org
 
 ## Dependencies
 - Python 3.6+ (uses built-in modules only)
-- No external packages required
+- dotenv for secure password handling is required, shown in requirements.txt
 
 ## Notes
 - Script checks for new emails every 10 seconds
