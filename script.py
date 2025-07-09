@@ -10,10 +10,11 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-import dotenv
 
+import dotenv
 dotenv.load_dotenv()
 
+# Configuration
 IMAP_HOST = "mail.sodertornkyrkan.se"
 SMTP_HOST = "mail.sodertornkyrkan.se"
 EMAIL = "brev@sodertornkyrkan.se"
@@ -21,11 +22,29 @@ PASSWORD = os.getenv("PASSWORD")
 ADMIN_EMAIL = "mattias.michelin@gmail.com"
 SUBSCRIBERS_FILE = "sodertornkyrkan-members.csv"
 
+# Check for required environment variables
+if not PASSWORD:
+    print("❌ ERROR: PASSWORD environment variable not found!")
+    print("Please create a .env file with: PASSWORD=your_password_here")
+    sys.exit(1)
+
+# Logging control
+VERBOSE_LOGGING = False  # Set to True for detailed logging, False for clean output
+
 # Global variables for connections and data
 imap = None
 smtp = None
 subscribers = []
 csv_last_modified = 0
+
+def log_verbose(message):
+    """Print message only if verbose logging is enabled"""
+    if VERBOSE_LOGGING:
+        print(message)
+
+def log_info(message):
+    """Print important information always"""
+    print(message)
 
 def load_subscribers():
     """Load subscribers from CSV file, only if file has changed"""
@@ -47,13 +66,13 @@ def load_subscribers():
                         if email:  # Double check email is not empty
                             subscribers.append(email)
             csv_last_modified = current_modified
-            print(f"Loaded {len(subscribers)} active members with emails from CSV")
+            log_info(f"📋 Loaded {len(subscribers)} active members with emails from database")
         return True
     except FileNotFoundError:
-        print(f"Error: {SUBSCRIBERS_FILE} not found")
+        log_info(f"❌ Error: {SUBSCRIBERS_FILE} not found")
         return False
     except Exception as e:
-        print(f"Error loading CSV: {e}")
+        log_info(f"❌ Error loading CSV: {e}")
         return False
 
 def connect_imap():
@@ -69,7 +88,7 @@ def connect_imap():
     imap = imaplib.IMAP4_SSL(IMAP_HOST, 993)
     imap.login(EMAIL, PASSWORD)
     imap.select("INBOX")
-    print("Connected to IMAP server")
+    log_verbose("🔗 Connected to IMAP server")
 
 def connect_smtp():
     """Connect to SMTP server"""
@@ -81,13 +100,14 @@ def connect_smtp():
         pass
     
     smtp = smtplib.SMTP_SSL(SMTP_HOST, 465)
-    smtp.set_debuglevel(1)  # Enable SMTP debugging
+    if VERBOSE_LOGGING:
+        smtp.set_debuglevel(1)  # Enable SMTP debugging only in verbose mode
     smtp.login(EMAIL, PASSWORD)
-    print("Connected to SMTP server")
+    log_verbose("📤 Connected to SMTP server")
 
 def cleanup_and_exit(signum=None, frame=None):
     """Clean shutdown handler"""
-    print("\nShutting down gracefully...")
+    log_info("\n🛑 Shutting down gracefully...")
     try:
         if imap:
             imap.close()
@@ -99,7 +119,7 @@ def cleanup_and_exit(signum=None, frame=None):
             smtp.quit()
     except:
         pass
-    print("Connections closed. Goodbye!")
+    log_info("✅ Connections closed. Goodbye!")
     sys.exit(0)
 
 def check_connections():
@@ -110,31 +130,36 @@ def check_connections():
     try:
         imap.noop()
     except:
-        print("IMAP connection lost, reconnecting...")
+        log_verbose("🔄 IMAP connection lost, reconnecting...")
         connect_imap()
     
     # Check SMTP connection
     try:
         smtp.noop()
     except:
-        print("SMTP connection lost, reconnecting...")
+        log_verbose("🔄 SMTP connection lost, reconnecting...")
         connect_smtp()
 
 # Set up signal handlers for graceful shutdown
 signal.signal(signal.SIGINT, cleanup_and_exit)
 signal.signal(signal.SIGTERM, cleanup_and_exit)
 
-print("Email forwarder started...")
+log_info("🚀 Email forwarder started...")
+if VERBOSE_LOGGING:
+    log_info("📝 Verbose logging enabled")
+else:
+    log_info("🔇 Quiet mode - only essential messages shown (set VERBOSE_LOGGING=True for details)")
 
 # Initial connections and data loading
 try:
     connect_imap()
     connect_smtp()
     if not load_subscribers():
-        print("Failed to load initial subscribers")
+        log_info("❌ Failed to load initial subscribers")
         cleanup_and_exit()
+    log_info("✅ System ready - monitoring for emails...")
 except Exception as e:
-    print(f"Initial setup failed: {e}")
+    log_info(f"❌ Initial setup failed: {e}")
     cleanup_and_exit()
 
 def send_reply_to_admin(subject, message):
@@ -147,26 +172,26 @@ def send_reply_to_admin(subject, message):
         reply_msg.attach(MIMEText(message, "plain", "utf-8"))
         
         smtp.send_message(reply_msg)
-        print(f"📧 Sent status reply to admin: {message}")
+        log_verbose(f"📧 Sent status reply to admin: {message}")
         return True
     except Exception as e:
-        print(f"❌ Failed to send reply to admin: {e}")
+        log_info(f"❌ Failed to send reply to admin: {e}")
         return False
 
 def process_admin_email(msg, subject):
     """Process email from admin - forward to subscribers if subject contains 'församlingsbrev'"""
     if "samlingsbrev" not in subject.lower():
-        print(f"⏭️ Skipping email '{subject}' - doesn't contain 'församlingsbrev'")
+        log_info(f"⏭️ Skipping '{subject}' - doesn't contain 'församlingsbrev'")
         return
     
-    print(f"📬 Processing newsletter: {subject}")
+    log_info(f"📬 Processing newsletter: {subject}")
     
     sent_count = 0
     failed_subscribers = []
     
     for subscriber in subscribers:
         try:
-            print(f"Preparing email for {subscriber}...")
+            log_verbose(f"Preparing email for {subscriber}...")
             
             # Create new message with all parts (text, html, attachments)
             forward_msg = MIMEMultipart()
@@ -196,7 +221,7 @@ def process_admin_email(msg, subject):
                                     text_content = part.get_payload(decode=True).decode('iso-8859-1')
                                 except UnicodeDecodeError:
                                     text_content = part.get_payload(decode=True).decode('utf-8', errors='replace')
-                            print(f"Found text content: {len(text_content)} characters")
+                            log_verbose(f"Found text content: {len(text_content)} characters")
                     
                     # Collect HTML content (check for inline content too)
                     elif content_type == "text/html" and not html_content:
@@ -209,7 +234,7 @@ def process_admin_email(msg, subject):
                                     html_content = part.get_payload(decode=True).decode('iso-8859-1')
                                 except UnicodeDecodeError:
                                     html_content = part.get_payload(decode=True).decode('utf-8', errors='replace')
-                            print(f"Found HTML content: {len(html_content)} characters")
+                            log_verbose(f"Found HTML content: {len(html_content)} characters")
                     
                     # Collect actual file attachments
                     elif ("attachment" in content_disposition and part.get_filename()) or \
@@ -223,7 +248,7 @@ def process_admin_email(msg, subject):
                             f'attachment; filename= {filename}'
                         )
                         attachments.append(attachment)
-                        print(f"Found attachment: {filename}")
+                        log_verbose(f"Found attachment: {filename}")
             else:
                 # Handle simple text messages
                 try:
@@ -233,58 +258,60 @@ def process_admin_email(msg, subject):
                         text_content = msg.get_payload(decode=True).decode('iso-8859-1')
                     except UnicodeDecodeError:
                         text_content = msg.get_payload(decode=True).decode('utf-8', errors='replace')
-                print(f"Found simple text content: {len(text_content)} characters")
+                log_verbose(f"Found simple text content: {len(text_content)} characters")
             
             # Debug: Show what content we found
-            print(f"Content summary: Text={len(text_content) if text_content else 0} chars, HTML={len(html_content) if html_content else 0} chars, Attachments={len(attachments)}")
+            log_verbose(f"Content summary: Text={len(text_content) if text_content else 0} chars, HTML={len(html_content) if html_content else 0} chars, Attachments={len(attachments)}")
             
             # Add content to message - prefer HTML over plain text
             if html_content:
                 forward_msg.attach(MIMEText(html_content, "html", "utf-8"))
-                print("Added HTML content to forwarded message")
+                log_verbose("Added HTML content to forwarded message")
             elif text_content:
                 forward_msg.attach(MIMEText(text_content, "plain", "utf-8"))
-                print("Added text content to forwarded message")
+                log_verbose("Added text content to forwarded message")
             else:
                 # Fallback: add a simple message if no content found
                 forward_msg.attach(MIMEText("Email forwarded from admin", "plain", "utf-8"))
-                print("No content found, added fallback message")
+                log_verbose("No content found, added fallback message")
             
             # Add any attachments
             for attachment in attachments:
                 forward_msg.attach(attachment)
-                print("Attached file to forwarded message")
+                log_verbose("Attached file to forwarded message")
             
             # Send message using persistent connection
-            print(f"Sending to {subscriber}...")
+            log_verbose(f"Sending to {subscriber}...")
             smtp.send_message(forward_msg)
             sent_count += 1
-            print(f"✅ Successfully sent to {subscriber}")
+            if VERBOSE_LOGGING:
+                log_verbose(f"✅ Successfully sent to {subscriber}")
             
         except Exception as e:
-            print(f"❌ Error sending to {subscriber}: {e}")
+            log_info(f"❌ Error sending to {subscriber}: {e}")
             failed_subscribers.append(subscriber)
             # Try to reconnect SMTP if sending fails
             try:
-                print("Attempting to reconnect SMTP...")
+                log_verbose("Attempting to reconnect SMTP...")
                 connect_smtp()
             except Exception as reconnect_error:
-                print(f"SMTP reconnection failed: {reconnect_error}")
+                log_info(f"SMTP reconnection failed: {reconnect_error}")
             continue
     
     # Send status reply to admin
     if failed_subscribers:
         reply_message = f"Newsletter '{subject}' sent to {sent_count}/{len(subscribers)} subscribers.\n\nFailed to send to:\n" + "\n".join(failed_subscribers)
+        log_info(f"⚠️ Newsletter sent to {sent_count}/{len(subscribers)} subscribers ({len(failed_subscribers)} failed)")
     else:
         reply_message = f"Everything worked! Newsletter '{subject}' successfully sent to all {sent_count} subscribers."
+        log_info(f"✅ Newsletter '{subject}' successfully sent to all {sent_count} subscribers")
     
     send_reply_to_admin(subject, reply_message)
-    print(f"📧 Forwarded newsletter '{subject}' to {sent_count}/{len(subscribers)} subscribers")
 
 def process_subscriber_email(msg, subject, sender):
     """Process email from subscriber - forward to admin"""
     try:
-        print(f"📩 Forwarding subscriber email from {sender} to admin")
+        log_info(f"📩 Forwarding subscriber email from {sender} to admin")
         
         # Create forward message
         forward_msg = MIMEMultipart()
@@ -323,10 +350,10 @@ def process_subscriber_email(msg, subject, sender):
         
         # Send to admin
         smtp.send_message(forward_msg)
-        print(f"✅ Successfully forwarded subscriber email to admin")
+        log_info(f"✅ Subscriber email forwarded to admin")
         
     except Exception as e:
-        print(f"❌ Error forwarding subscriber email: {e}")
+        log_info(f"❌ Error forwarding subscriber email: {e}")
 
 while True:
     try:
@@ -334,7 +361,7 @@ while True:
         load_subscribers()
         
         if not subscribers:
-            print("No subscribers found, skipping...")
+            log_verbose("No subscribers found, skipping...")
             time.sleep(60)
             continue
         
@@ -357,7 +384,7 @@ while True:
                     subject = msg["Subject"] or "No Subject"
                     sender = msg["From"] or "Unknown Sender"
                     
-                    print(f"📨 New email from {sender}: {subject}")
+                    log_info(f"📨 New email from {sender}: {subject}")
                     
                     # Mark as seen
                     imap.store(msg_id, "+FLAGS", "\\Seen")
@@ -369,17 +396,19 @@ while True:
                     elif any(subscriber.lower() in sender.lower() for subscriber in subscribers):
                         process_subscriber_email(msg, subject, sender)
                     else:
-                        print(f"⏭️ Ignoring email from unknown sender: {sender}")
+                        log_verbose(f"⏭️ Ignoring email from unknown sender: {sender}")
                     
                 except Exception as e:
-                    print(f"Error processing message {msg_id}: {e}")
+                    log_info(f"❌ Error processing message {msg_id}: {e}")
                     continue
+        else:
+            log_verbose("📭 No new emails")
         
     except KeyboardInterrupt:
         cleanup_and_exit()
     except Exception as e:
-        print(f"Connection error: {e}")
-        print("Retrying in 60 seconds...")
+        log_info(f"🔌 Connection error: {e}")
+        log_info("🔄 Retrying in 60 seconds...")
         try:
             connect_imap()
             connect_smtp()
